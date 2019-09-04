@@ -14,7 +14,7 @@ from stable_baselines import A2C
 from stable_baselines.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines import PPO2
 
-REPORT_PATH = 'reports/'
+REPORT_PATH = 'C:/Users/Avisia/Documents/Dorian/Gym_RL/Aequam_v0/reports/'
 
 def rescale(df, start_int = 0, base = 100):
     return(df/np.array(df.iloc[start_int,:])*base)
@@ -75,7 +75,7 @@ class AequamEnv(gym.Env):
         self.total_tc += new_tc
         
         #store
-        # a=self.pf_value
+        a=self.pf_value *1
         
         self.pf_value *= (self.df_render.iloc[self.timestep+1,action]/self.df_render.iloc[self.timestep,action])
         self.pf_value -= new_tc
@@ -90,8 +90,9 @@ class AequamEnv(gym.Env):
         if self.reward_type == 'delayed':
             delay_modifier = (self.timestep / self.total_window)
             reward = self.pf_value * delay_modifier
+            # reward = self.pf_value
         elif self.reward_type == 'daily':
-            reward = self.pf_value - self.transaction_smoothing * self.total_tc
+            reward = self.pf_value/a * 100 - self.transaction_smoothing * self.total_tc
         else:
             raise ValueError
         
@@ -116,6 +117,8 @@ class AequamEnv(gym.Env):
         self.df_render['Action']= self.last_action
         self.df_render['Transaction_cost']=0.0
         self.df_render['Portfolio_value']=self.pf_value    
+
+        return(self._next_observation())
     
 #     def render(self, mode='human', close=False):
 #         df_to_plot = self.df_render.iloc[(self.lookback_window-2):-2,:][['Portfolio_value', 'Equally_weighted']]   
@@ -125,13 +128,14 @@ class AequamEnv(gym.Env):
     def render(self):
         pass
 
+
     def play_last_episode(self, model):
         obs = self.reset()
         for i in range(self.total_window -self.lookback_window-1):
         #     i += 1
         #     print(i)
             action, _states = model.predict(obs)
-            obs, rewards, done, info = env.step(action)
+            obs, rewards, done, info = self.step(action)
 
 
     def plot_last_episode(self, show=True, save=False):
