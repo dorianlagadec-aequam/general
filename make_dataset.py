@@ -1,4 +1,8 @@
-'''Module for the proper dataset generation'''
+'''Module for the proper dataset generation
+MAY BE OBSOLETE because very rigid. But enabled to create training datasets. Some functions can still be of use.
+Was widely used in 'Create and visualize datasets'.ipynb in first hand
+
+'''
 
 #import os
 #import pdb
@@ -10,12 +14,24 @@ import matplotlib.pyplot as plt
 import ta
 
 def _convert_time(date, input_format, output_format):
-    '''Use the datetime formats to convert one string to another. For us, useful to unify formats'''
+    '''
+    Use the datetime formats to convert one string to another. For us, useful to unify formats
+
+    Args :
+        date (str): a string representing a date you want to change the format from 
+        input_format (datetime format): the format to use to parse the date given to the function (see datetime doc)
+        output_format (datetime format): the format to use to display the date given to the function (see datetime doc)
+
+    Returns:
+        str for the date in the proper format
+    '''
     return dt.strptime(date, input_format).strftime(output_format)
 
 def _column_name(variable, indicator, window=''):
-    '''Generalizes the format of column names in our datafrme, using the technical
-    indicator and the proper window'''
+    '''
+    Generalizes the format of column names in our datafrme, using the technical
+    indicator and the proper window
+    '''
     return str(variable) + '_' + indicator + '_' + str(window)
 
 
@@ -98,24 +114,6 @@ class ProperDataset:
                     new_ema_name = _column_name(macro, 'EMA', window)
                     self.total_df[new_ema_name] = ta.trend.ema_indicator(self.total_df[macro], n=window, fillna=False)
 
-    # def restrict_to(self, start_time=None, end_time=None, variable='', technical_indicator=''):
-    #     '''Restricts the observed dataframe to a timeframe window and to chosen variables
-    #     and technical indicators
-
-    #     Dates must be passed in 'yyyy-mm-dd' format
-    #     For several values in variable or technical indicator, provide them in a tuple
-
-    #     To search for variables, please look self.risk_premia_cols or self.macros_cols'''
-    #     if technical_indicator != '':
-    #         lst = list(technical_indicator)
-    #         for i in range(len(lst)):
-    #             lst[i] = '_' + lst[i] + '_'
-    #         tup = '|'.join(lst)
-    #     else:
-    #         tup = technical_indicator
-    #     return(self.total_df.loc[start_time:end_time, self.total_df.columns.str.startswith(variable)\
-    #         & self.total_df.columns.str.contains(tup)])
-
     def restrict_to(self, start_time=None, end_time=None, variable='', technical_indicator=''):
         '''Restricts the observed dataframe to a timeframe window and to chosen variables
         and technical indicators
@@ -143,9 +141,6 @@ class ProperDataset:
 
 
 if __name__ == '__main__':
-    #CHEMINS AMBIGUS A CHANGER
     test = ProperDataset("data/risk_premia.csv", "data/macros.csv")
     test.add_technical_indicators()
-    #pdb.set_trace()
-    # test.total_df.to_csv('data_transformed/test.csv')
     print(test.restrict_to('2010-01-01','2010-01-15',variable='Value', technical_indicator='EMA'))

@@ -180,11 +180,12 @@ class AequamEnv(gym.Env):
             plt.close()
 
     def plot_positions(self, show=True, save=False):
-        '''Plots the terminal portfolio value for each episode, to see the learning process
+        '''
+        Plots the terminal portfolio value for each episode, to see the learning process
         
-            Args:
-                show (bool): show the graph
-                save (bool): save the graph in a picture
+        Args:
+            show (bool): show the graph
+            save (bool): save the graph in a picture
         '''
         plt.figure(figsize=(15,7))
         self.df_render['Action'].plot()
