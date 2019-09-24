@@ -24,7 +24,8 @@ class AequamEnv(gym.Env):
     visualization = None
 
     def __init__(self, df_obs, df_prices, lookback_window = 5, transaction_cost = 0.001, starting_cash = 100.0, \
-                max_balance = 1000.0, reward_type='delayed', transaction_smoothing = 1):
+                max_balance = 1000.0, reward_type='delayed', transaction_smoothing = 10, reward_window = 10,\
+                risk_aversion = 5):
   
         super(AequamEnv, self).__init__()
     
@@ -37,9 +38,11 @@ class AequamEnv(gym.Env):
         self.timestep = self.lookback_window -2
         self.pf_value = starting_cash
         self.last_action = 0
-        self.reward_range = (0, max_balance)
+        self.reward_range = (0, max_balance)*(reward_type == 'delayed') + (-2,2)*(reward_type == 'daily') + (-2,2)*(reward_type == 'vol')
         self.reward_type = reward_type
         self.transaction_smoothing = transaction_smoothing
+        self.reward_window = reward_window
+        self.risk_aversion = risk_aversion
         #.....
 
         self.df_obs = df_obs
@@ -66,7 +69,7 @@ class AequamEnv(gym.Env):
     def _next_observation(self):
         return(np.array(self.df_obs.iloc[(self.timestep-self.lookback_window+2):(self.timestep +2),:]))
 
-    def step(self, action):
+    def step(self, action):#here
         #Set next observation
         obs = self._next_observation()
         
@@ -83,7 +86,7 @@ class AequamEnv(gym.Env):
         self.df_render.iloc[self.timestep+1,-3:] = [action, self.total_tc, self.pf_value]
         
         self.timestep += 1
-        self.last_action = int(action)
+        
         # print(action)
         
         #Reward function   TO DO : specify smarter function
@@ -93,11 +96,25 @@ class AequamEnv(gym.Env):
             # reward = self.pf_value
         elif self.reward_type == 'daily':
             reward = self.pf_value/a * 100 - self.transaction_smoothing * self.total_tc
+        elif self.reward_type == 'vol':
+            reward_pf = np.array(self.df_render.iloc[self.timestep:(self.timestep+self.reward_window), action])
+            reward_returns = np.diff(reward_pf) / reward_pf[1:] 
+            return_metric = (reward_pf[-1]-reward_pf[0])/reward_pf[0]
+            transaction_cost_metric = self.transaction_cost * self.pf_value/self.starting_cash * (1-(self.last_action == action)*1)
+            semivariance = reward_returns[reward_returns<0].std()
+            if np.isnan(semivariance):
+                semivariance = 0.0
+            reward = return_metric - self.risk_aversion * semivariance - self.transaction_smoothing * transaction_cost_metric
+#             print('#'*20)
+#             print('return_metric', 'transaction_cost_metric', 'semivariance', 'reward')
+#             print(np.round(return_metric,3), np.round(transaction_cost_metric,3), np.round(semivariance,3), np.round(reward,3))
+            
         else:
             raise ValueError
         
+        self.last_action = int(action)
         #Set the counter to done or not
-        done = (self.timestep > len(self.df_obs)-2) | (self.pf_value < 0)
+        done = (self.timestep > len(self.df_obs)-2 - self.reward_window) | (self.pf_value < 0)
         
         #Add additional info for debugging purposes
         info = {}
@@ -207,5 +224,6 @@ class AequamEnv(gym.Env):
         
         pdf.output(REPORT_PATH+title+'.pdf', 'F')
         return('Done')
+
 
 
