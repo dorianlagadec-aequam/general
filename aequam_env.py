@@ -1,3 +1,8 @@
+'''
+Class to adapt Open AI gym environments to Aequam Capital specific's problematic
+'''
+
+
 import gym
 from gym import spaces
 
@@ -14,18 +19,56 @@ from stable_baselines import A2C
 from stable_baselines.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines import PPO2
 
+from backtest_utils import *
+
 REPORT_PATH = 'C:/Users/Avisia/Documents/Dorian/Gym_RL/Aequam_v0/reports/'
 
-def rescale(df, start_int = 0, base = 100):
-    return(df/np.array(df.iloc[start_int,:])*base)
-
 class AequamEnv(gym.Env):
+    '''
+    Trading environment class inheriting from gym.Env
+
+    Methods:
+        __init__
+        step
+        reset
+        render
+        play_last_episode
+        plot_last_episode
+        plot_positions
+        print_pdf_report
+        _next_observation
+    '''
+
     metadata = {'render.modes': ['human', 'live', 'file']}
     visualization = None
 
     def __init__(self, df_obs, df_prices, lookback_window = 5, transaction_cost = 0.001, starting_cash = 100.0, \
                 max_balance = 1000.0, reward_type='delayed', transaction_smoothing = 10, reward_window = 10,\
-                risk_aversion = 5):
+                risk_aversion = 5, report_path = REPORT_PATH):
+
+        '''
+        Args:
+            df_obs (pandas.DataFrame): the DataFrame that contains potentially explaining data (signal-providing)
+            df_prices (pandas.DataFrame): the DataFrame that contains prices of the assets the agent can trade (one column per asset)
+            lookback_window (int): the amount of rows the agent can observe in the past
+            transaction_cost (float): backtest hypothesis on the percentage of transaction cost
+            starting_cash (float): the amount of cash to start the strategy
+            max_balance (float): the maximum balance the agent can hold (estimation, to feed the algorithm)
+            reward_type (str in ['delayed','daily','vol']): the reward philosophy for the agent. Other philosophies can be added
+            transaction_smoothing (float): penalty for high number of transactions. Useful for 'vol' reward
+            reward_window (int): time parameter of the strategy. The higher it is, the more long-term the strategy is. Useful for 'vol' reward
+            risk_aversion (float): penalty for high drawdown. Useful for 'vol' reward
+            report_path (str): path to the folder you want to save the pdf reports in
+
+        Attributes:
+            n_observations (int): the number of columns in df_obs (the number of explicative variables)
+            n_assets (int): the number of columns in df_prices (the number of assets or portfolios the agent can trade)
+            total_window (int): the number of rows in df_obs (to see the number of trading days)
+            df_render (pandas.DataFrame): a DataFrame containing useful information on the portfolio traded across time
+            action_space (MANDATORY FOR GYM, gym.spaces): the space of action. Can be Discrete or Box (continuous)
+            observation_space (MANDATORY FOR GYM, gym.spaces): the space of observations. Can be Discrete or Box (continuous)
+            WARNING : the types of action_space and observation_space (Discrete, Box, MultiDiscrete, ...) limits the type of model the agent can use
+        '''
   
         super(AequamEnv, self).__init__()
     
@@ -33,12 +76,12 @@ class AequamEnv(gym.Env):
         #More initialisation parameters
         self.lookback_window = lookback_window
         self.transaction_cost = transaction_cost
-        self.total_tc = 0.0
+        self.total_tc = 0.0 #total transaction costs (keep track)
         self.starting_cash = starting_cash
         self.timestep = self.lookback_window -2
         self.pf_value = starting_cash
         self.last_action = 0
-        self.reward_range = (0, max_balance)*(reward_type == 'delayed') + (-2,2)*(reward_type == 'daily') + (-2,2)*(reward_type == 'vol')
+        self.reward_range = (0, max_balance)*(reward_type == 'delayed') + (-2,2)*(reward_type == 'daily') + (-2,2)*(reward_type == 'vol') #for agent
         self.reward_type = reward_type
         self.transaction_smoothing = transaction_smoothing
         self.reward_window = reward_window
@@ -46,7 +89,7 @@ class AequamEnv(gym.Env):
         #.....
 
         self.df_obs = df_obs
-        self.df_prices = rescale(df_prices, self.lookback_window-2, self.starting_cash)
+        self.df_prices = rescale(df_prices, self.lookback_window-2, self.starting_cash) #start with same value at the beginning
         self.df_prices['Cash'] = self.starting_cash
         self.df_render = self.df_prices.copy()
         
@@ -65,11 +108,16 @@ class AequamEnv(gym.Env):
         self.observation_space = spaces.Box(low=np.tile(np.array(self.df_obs.min()),(self.lookback_window,1)), \
                                             high=np.tile(np.array(self.df_obs.max()), (self.lookback_window,1)),\
                                             dtype=np.float16)
+
+        self.report_path = report_path
         
     def _next_observation(self):
+        '''
+        Goes one step in time and change the observation for the agent
+        '''
         return(np.array(self.df_obs.iloc[(self.timestep-self.lookback_window+2):(self.timestep +2),:]))
 
-    def step(self, action):#here
+    def step(self, action):
         #Set next observation
         obs = self._next_observation()
         
@@ -79,7 +127,7 @@ class AequamEnv(gym.Env):
         
         #store
         a=self.pf_value *1
-        
+        #update portfolio values
         self.pf_value *= (self.df_render.iloc[self.timestep+1,action]/self.df_render.iloc[self.timestep,action])
         self.pf_value -= new_tc
         
@@ -87,16 +135,13 @@ class AequamEnv(gym.Env):
         
         self.timestep += 1
         
-        # print(action)
-        
-        #Reward function   TO DO : specify smarter function
-        if self.reward_type == 'delayed':
+        #Three types of rewards: more can be added and fine-tuned
+        if self.reward_type == 'delayed': #dummy one, found on Github for similar project
             delay_modifier = (self.timestep / self.total_window)
             reward = self.pf_value * delay_modifier
-            # reward = self.pf_value
-        elif self.reward_type == 'daily':
+        elif self.reward_type == 'daily': #daily reward corresponding for daily return penalized by transaction cost
             reward = self.pf_value/a * 100 - self.transaction_smoothing * self.total_tc
-        elif self.reward_type == 'vol':
+        elif self.reward_type == 'vol': #ultimate one, which was designed and validated by research team
             reward_pf = np.array(self.df_render.iloc[self.timestep:(self.timestep+self.reward_window), action])
             reward_returns = np.diff(reward_pf) / reward_pf[1:] 
             return_metric = (reward_pf[-1]-reward_pf[0])/reward_pf[0]
@@ -104,10 +149,8 @@ class AequamEnv(gym.Env):
             semivariance = reward_returns[reward_returns<0].std()
             if np.isnan(semivariance):
                 semivariance = 0.0
+            #reward is return on a frozen portfolio for a number of days, penalized by semivariance and transaction costs
             reward = return_metric - self.risk_aversion * semivariance - self.transaction_smoothing * transaction_cost_metric
-#             print('#'*20)
-#             print('return_metric', 'transaction_cost_metric', 'semivariance', 'reward')
-#             print(np.round(return_metric,3), np.round(transaction_cost_metric,3), np.round(semivariance,3), np.round(reward,3))
             
         else:
             raise ValueError
@@ -136,31 +179,32 @@ class AequamEnv(gym.Env):
         self.df_render['Portfolio_value']=self.pf_value    
 
         return(self._next_observation())
-    
-#     def render(self, mode='human', close=False):
-#         df_to_plot = self.df_render.iloc[(self.lookback_window-2):-2,:][['Portfolio_value', 'Equally_weighted']]   
-#         df_to_plot['diff'] = df_to_plot['Portfolio_value']/df_to_plot['Equally_weighted']
-# #         print(df_to_plot.iloc[-2,-1])
-#         return(df_to_plot)    
+        
     def render(self):
         pass
 
-
     def play_last_episode(self, model):
+        '''
+        Given a model, play the last episode and stop before reset
+
+        Args:
+            model: a model within stable_baselines, already initialized with AequamEnv
+
+
+        '''
         obs = self.reset()
         for i in range(self.total_window -self.lookback_window-1):
-        #     i += 1
-        #     print(i)
             action, _states = model.predict(obs)
             obs, rewards, done, info = self.step(action)
 
 
     def plot_last_episode(self, show=True, save=False):
-        '''Plots the terminal portfolio value for each episode, to see the learning process
+        '''
+        Plots the terminal portfolio value for each episode, to see the learning process
         
-            Args:
-                show (bool): show the graph
-                save (bool): save the graph in a picture
+        Args:
+            show (bool): show the graph
+            save (bool): save the graph in a picture
         '''
         plt.figure(figsize=(15,7))
         df_to_plot = self.df_render.iloc[(self.lookback_window-2):-2,:][['Portfolio_value', 'Equally_weighted']]   
@@ -173,7 +217,7 @@ class AequamEnv(gym.Env):
         plt.xlabel('Date')
         plt.ylabel('Value')
         if save:
-            plt.savefig(REPORT_PATH+'plot_last_episode.png', dpi=150)
+            plt.savefig(self.report_path+'plot_last_episode.png', dpi=150)
         if show:
             plt.show()
         else:
@@ -181,7 +225,7 @@ class AequamEnv(gym.Env):
 
     def plot_positions(self, show=True, save=False):
         '''
-        Plots the terminal portfolio value for each episode, to see the learning process
+        Plots the terminal portfolio value with positions at all times
         
         Args:
             show (bool): show the graph
@@ -195,7 +239,7 @@ class AequamEnv(gym.Env):
         plt.xlabel('Date')
         plt.ylabel('Position')
         if save:
-            plt.savefig(REPORT_PATH+'plot_positions.png', dpi=150)
+            plt.savefig(self.report_path+'plot_positions.png', dpi=150)
         if show:
             plt.show()
         else:
@@ -203,7 +247,7 @@ class AequamEnv(gym.Env):
 
     def print_pdf_report(self, title='sans_titre'):
         '''
-        Print a pdf report containing all graphics and dataframes on the training. Useful for quick visual analysis
+        Print a pdf report containing all graphics. Useful for quick visual analysis
 
         Arg:
             title (str): The title of the pdf file
@@ -220,11 +264,8 @@ class AequamEnv(gym.Env):
         self.plot_last_episode(show=False, save=True)
         self.plot_positions(show=False, save=True)
 
-        pdf.image(REPORT_PATH+'plot_last_episode.png', x = None, y = None, w = 150, h = 0, type = '', link = '')
-        pdf.image(REPORT_PATH+'plot_positions.png', x = None, y = None, w = 150, h = 0, type = '', link = '')
+        pdf.image(self.report_path+'plot_last_episode.png', x = None, y = None, w = 150, h = 0, type = '', link = '')
+        pdf.image(self.report_path+'plot_positions.png', x = None, y = None, w = 150, h = 0, type = '', link = '')
         
-        pdf.output(REPORT_PATH+title+'.pdf', 'F')
+        pdf.output(self.report_path+title+'.pdf', 'F')
         return('Done')
-
-
-
